@@ -4,7 +4,7 @@ import { Keypair, Utxo, createTransactionData, getProvider, utxoFactory, workerP
 import { ChainId, LogLevel } from '@/types'
 import { toWei } from 'web3-utils'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
-import { useAccount, useContractWrite, usePrepareContractWrite, usePublicClient, useSignMessage, useWalletClient } from 'wagmi'
+import { useAccount, useContractWrite, useNetwork, usePrepareContractWrite, usePublicClient, useSignMessage, useWalletClient } from 'wagmi'
 import { BG_ZERO, POOL_CONTRACT, SIGN_MESSAGE } from '@/constants'
 import { useEffect, useState } from 'react'
 import { encodeTransactData, generatePrivateKeyFromEntropy, toChecksumAddress, toHexString } from '@/utilities'
@@ -38,6 +38,13 @@ export default function Home() {
   const [poolBalance, setPoolBalance] = useState(0)
   const [keypair, setKeypair] = useState<Keypair | null>(null)
   const [activeTab, setActiveTab] = useState('deposit')
+  const [curChainId, setCurChainId] = useState(0)
+  const [curAddress, setCurAddress] = useState('')
+
+  const { address, connector } = useAccount()
+  const publicClient = usePublicClient()
+  const { data: walletClient } = useWalletClient()
+  const { chain } = useNetwork()
 
   const logger = (message: string, logType: LogLevel = LogLevel.DEBUG) => {
     if (logType === LogLevel.ERROR) {
@@ -63,38 +70,47 @@ export default function Home() {
     },
   })
 
-  const { address, connector } = useAccount()
-  const publicClient = usePublicClient()
-  const { data: walletClient } = useWalletClient()
+  useEffect(() => {
+    if (curChainId != 0 && chain && chain.id !== curChainId) {
+      setError('Unsupported chain')
+    }
+  }, [chain])
 
   useEffect(() => {
-    initializeKeypair()
-  }, [connector, keypair, signMessage])
+    if (curAddress != '' && address && address !== curAddress) {
+      setKeypair(null)
+      setPoolBalance(0)
+      setCurAddress('')
+    }
+  }, [address])
 
   async function initializeKeypair() {
-    if (!keypair && connector != null) {
-      try {
-        setLoadingMessage('Sign message to initialize')
-        await signMessage()
-        setLoadingMessage('')
-      } catch (error) {
-        setLoadingMessage('')
-        setError(error.message)
-      }
+    if (!connector || !address) {
+      setError('Connect your wallet first')
+      return
+    }
+    try {
+      setLoadingMessage('Sign message to initialize')
+      setCurAddress(address)
+      setCurChainId(chain?.id || 0)
+      await signMessage()
+      setLoadingMessage('')
+    } catch (error) {
+      setLoadingMessage('')
+      setError(error.message)
     }
   }
 
   async function syncPoolBalance() {
-    if(!keypair) {
+    if (!keypair) {
       return
     }
-    if(!address) {
+    if (!address) {
       return
     }
     const { totalAmount } = await getUtxoFromKeypair({ keypair, accountAddress: address, withCache: false })
     setPoolBalance(totalAmount)
   }
-
 
   async function initKeypair(keypair: Keypair) {
     try {
@@ -183,12 +199,18 @@ export default function Home() {
         <Logo />
 
         <div className="flex items-center space-x-4">
-          <Balance shieldedBalance={poolBalance} /> {/* Replace 123.45 with dynamic value if needed */}
+          {keypair && <Balance shieldedBalance={poolBalance} />}
+
+          {!keypair && (
+            <button onClick={initializeKeypair} className="px-4 py-2 text-white bg-blue-500 rounded hover:bg-blue-600">
+              Initialize
+            </button>
+          )}
           <ConnectButton />
         </div>
       </header>
 
-      {/* Main content */}
+      { curAddress && (
       <div className="flex justify-center pt-8">
         <div className="bg-white rounded-lg shadow-md p-0 w-96">
           {/* Tabs */}
@@ -206,17 +228,17 @@ export default function Home() {
               Withdraw
             </button>
           </div>
-
           {/* Tab content */}
           {activeTab === 'deposit' ? (
-            <DepositComponent deposit={deposit} balance={0.0001} />
+            <DepositComponent deposit={deposit} address={curAddress} />
           ) : (
             <WithdrawComponent withdrawWithRelayer={withdrawWithRelayer} relayers={relayers} />
           )}
-          <ErrorModal errorMessage={error} />
+          <ErrorModal isVisible={error !== ''} message={error} onClose={() => setError('')} />
           <LoadingSpinner loadingMessage={loadingMessage} />
         </div>
       </div>
+      )}
     </div>
   )
 }
